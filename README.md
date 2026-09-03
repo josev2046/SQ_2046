@@ -1,4 +1,6 @@
-# SQ-2046 Analogue Groovebox — Operating Manual
+# SQ-2046 Analogue Groovebox
+
+[![DOI](https://zenodo.org/badge/1355250651.svg)](https://doi.org/10.5281/zenodo.22275089)
 
 ## Table of Contents
 
