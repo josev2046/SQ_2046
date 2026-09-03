@@ -1,10 +1,10 @@
-# SQ-2046 Analog Groovebox — Operating Manual
+# SQ-2046 Analogue Groovebox — Operating Manual
 
 ## Table of Contents
 
 1. [Introduction](#1-introduction)
 2. [Master Controls & Architecture](#2-master-controls--architecture)
-3. [Synthesizer Tracks (A & B)](#3-synthesizer-tracks-a--b)
+3. [Synthesiser Tracks (A & B)](#3-synthesiser-tracks-a--b)
 4. [Rhythm Generator](#4-rhythm-generator)
 5. [Technical Specifications](#5-technical-specifications)
 6. [Credits & Copyright](#credits--copyright)
@@ -13,7 +13,7 @@
 
 ## 1. Introduction
 
-Welcome to the **SQ-2046 Analog Groovebox**, a comprehensive 16-step sequencing environment that fuses two independent monophonic synthesisers with a three-part analog-style drum machine.
+Welcome to the **SQ-2046 Analogue Groovebox**, a comprehensive 16-step sequencing environment that fuses two independent monophonic synthesisers with a three-part analogue-style drum machine.
 
 Built entirely on the Web Audio API, the SQ-2046 delivers punchy, hardware-accurate sound shaped by a master brickwall compressor and a lush, tape-style delay. Whether you're generating squelchy acid basslines or programming driving techno rhythms, this groovebox offers an immediate, tactile workflow designed for modern widescreen and tablet displays.
 
@@ -59,7 +59,7 @@ A global tape-style delay unit fed by the master bus.
 
 ---
 
-## 3. Synthesizer Tracks (A & B)
+## 3. Synthesiser Tracks (A & B)
 
 The SQ-2046 features two identical monophonic synth voices — **Track A** in red, **Track B** in blue. Each has its own 16-step matrix, track-specific playback mode, and sound-shaping parameters.
 
@@ -117,7 +117,7 @@ As with the synth tracks, the Rhythm Generator has its own **MUTE**, **RAND**, a
 
 - **Sequencer Architecture:** 3 independent 16-step tracks (2 synth, 1 drum), each with independent play direction (Forward, Reverse, Ping-Pong, Random).
 - **Audio Engine:** Web Audio API, with a master `DynamicsCompressorNode` (brickwall limiting) to prevent clipping during high-resonance filter sweeps.
-- **Synthesizer Voices:** 4 selectable waveforms, independent filter envelopes, variable step-level cutoff offsets, step-level accent, and slide (TB-303-style portamento).
+- **Synthesiser Voices:** 4 selectable waveforms, independent filter envelopes, variable step-level cutoff offsets, step-level accent, and slide (TB-303-style portamento).
 - **Rhythm Voices:** Sine-sweep kick drum, band-pass noise snare, high-pass noise hats.
 - **Delay FX:** Tempo-synced ping-pong delay with a 2kHz low-pass dampening filter in the feedback loop.
 - **Interface:** Hardware-locked 1,280px widescreen chassis, optimised for touch displays with Pointer Event draggable elements and overscroll protection.
@@ -126,7 +126,7 @@ As with the synth tracks, the Rhythm Generator has its own **MUTE**, **RAND**, a
 
 ## Credits & Copyright
 
-**SQ-2046 Analog Groovebox**
+**SQ-2046 Analogue Groovebox**
 Created & Developed by **Jose Velazquez MA**
 Published by **Voltage & Wave**
 Website: [voltageandwave.co.uk](https://voltageandwave.co.uk/)
