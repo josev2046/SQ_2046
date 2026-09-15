@@ -441,7 +441,11 @@
                     <span class="silkscreen-label tracking-widest opacity-70">RECORDER</span>
                     <button id="recordBtn" class="btn-small action-btn w-[74px] h-8">&#9679; REC</button>
                     <span id="recordStatus" class="silkscreen-label text-[#c83a2a] font-black w-11 text-center">00:00</span>
-                    <a id="downloadBtn" href="#" class="btn-small action-btn w-[90px] h-8 btn-disabled text-center">SAVE WAV</a>
+                    <span class="silkscreen-label opacity-50 mx-1">STEMS:</span>
+                    <a id="downloadMaster" href="#" class="btn-small action-btn w-[52px] h-8 btn-disabled text-center" title="Full mix">MSTR</a>
+                    <a id="downloadA" href="#" class="btn-small action-btn track-a-btn w-[52px] h-8 btn-disabled text-center" title="Track A">TRK A</a>
+                    <a id="downloadB" href="#" class="btn-small action-btn track-b-btn w-[52px] h-8 btn-disabled text-center" title="Track B">TRK B</a>
+                    <a id="downloadDrums" href="#" class="btn-small action-btn track-d-btn w-[52px] h-8 btn-disabled text-center" title="Drums">DRUM</a>
                 </div>
                 <div class="silkscreen-label tracking-widest text-right opacity-80">
                     &copy; 2026 JOSE VELAZQUEZ MA / <a href="https://voltageandwave.co.uk/" target="_blank" rel="noopener noreferrer" class="hover:text-[#c83a2a] underline transition-colors">VOLTAGE &amp; WAVE</a>
@@ -459,15 +463,22 @@
         let rootNoteOffset = 0, globalPitchBend = 0;
 
         let masterBus, delayNode, delayFeedback, delayMix, delayFilter, noiseBuffer, masterCompressor;
+        let busA, busB, busDrums; // per-track sum buses, tapped individually for stem recording
         let synthEngines = { A: null, B: null };
 
-        // --- Recording state (tap of the final mixed bus, encoded to WAV on stop) ---
-        let recordDestination = null;
-        let mediaRecorder = null;
-        let recordedChunks = [];
+        // --- Recording state ---
+        // One take captures four parallel MediaStreamDestinations at once: the full
+        // master mix, plus each track's own bus (busA/busB/busDrums) pre-mixdown.
+        // That guarantees the stems stay phase-locked to each other and to the master,
+        // since they all come from the exact same performance pass.
+        const STEMS = ['master', 'A', 'B', 'drums'];
+        let recordDest = { master: null, A: null, B: null, drums: null };
+        let mediaRecorders = { master: null, A: null, B: null, drums: null };
+        let recordedChunks = { master: [], A: [], B: [], drums: [] };
         let isRecording = false;
         let recordStartTime = 0;
         let recordTimerInterval = null;
+        let takeStamp = '';
 
         const tracks = {
             A: { muted: false, wave: 'sawtooth', step: 0, dir: 1, mode: 'forward', prevSlide: false, pitch: [12, 0, 12, 0, 15, 0, 12, 0, 19, 0, 15, 0, 12, 0, 15, 0], filter: [80, 0, 40, 0, 80, 0, 40, 0, 100, 0, 80, 0, 40, 0, 80, 0], slide: [false, true, false, false, false, true, false, false, false, false, true, false, false, false, true, false], accent: [true, false, false, false, true, false, false, false, true, false, false, false, true, false, false, false], elements: [] },
@@ -691,10 +702,10 @@
             masterCompressor.release.value = 0.25;
             masterCompressor.connect(audioCtx.destination);
 
-            // Tap the final mixed output (post-compressor) for recording, without
-            // altering what's heard on the speakers.
-            recordDestination = audioCtx.createMediaStreamDestination();
-            masterCompressor.connect(recordDestination);
+            // Tap the final mixed output (post-compressor) for the master recording,
+            // without altering what's heard on the speakers.
+            recordDest.master = audioCtx.createMediaStreamDestination();
+            masterCompressor.connect(recordDest.master);
 
             masterBus = audioCtx.createGain(); 
             delayNode = audioCtx.createDelay(2.0); delayFeedback = audioCtx.createGain(); delayMix = audioCtx.createGain(); delayFilter = audioCtx.createBiquadFilter();
@@ -704,10 +715,21 @@
             masterBus.connect(masterCompressor); delayNode.connect(delayMix); delayMix.connect(masterCompressor);
             updateDelayParams();
 
+            // Per-track sum buses: every voice on a track routes through its own bus
+            // before joining masterBus. Each bus also feeds its own MediaStreamDestination,
+            // so a single REC pass yields phase-locked, individually isolated stems
+            // (dry, pre-delay/compression) alongside the full master bounce.
+            busA = audioCtx.createGain(); busB = audioCtx.createGain(); busDrums = audioCtx.createGain();
+            busA.connect(masterBus); busB.connect(masterBus); busDrums.connect(masterBus);
+            recordDest.A = audioCtx.createMediaStreamDestination(); busA.connect(recordDest.A);
+            recordDest.B = audioCtx.createMediaStreamDestination(); busB.connect(recordDest.B);
+            recordDest.drums = audioCtx.createMediaStreamDestination(); busDrums.connect(recordDest.drums);
+
             const bufSize = audioCtx.sampleRate * 2; noiseBuffer = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
             const out = noiseBuffer.getChannelData(0); for (let i = 0; i < bufSize; i++) out[i] = Math.random() * 2 - 1;
 
             ['A', 'B'].forEach(id => {
+                const trackBus = id === 'A' ? busA : busB;
                 const env = audioCtx.createGain(); env.gain.value = 0;
                 const filter = audioCtx.createBiquadFilter();
                 const osc = audioCtx.createOscillator();
@@ -715,7 +737,7 @@
                 const noiseGain = audioCtx.createGain(); noiseGain.gain.value = 0;
                 
                 osc.connect(filter); noiseSrc.connect(noiseGain); noiseGain.connect(filter);
-                filter.connect(env); env.connect(masterBus); 
+                filter.connect(env); env.connect(trackBus); 
                 osc.start(); noiseSrc.start();
                 synthEngines[id] = { osc, filter, env, noiseGain };
             });
@@ -750,17 +772,17 @@
                 const o = audioCtx.createOscillator(), e = audioCtx.createGain();
                 o.frequency.setValueAtTime(parseFloat(document.getElementById('kickPitch').value), time); o.frequency.exponentialRampToValueAtTime(40, time + 0.1);
                 e.gain.setValueAtTime(0, time); e.gain.linearRampToValueAtTime(0.8, time + 0.005); e.gain.exponentialRampToValueAtTime(0.01, time + 0.25);
-                o.connect(e); e.connect(masterBus); o.start(time); o.stop(time + 0.3);
+                o.connect(e); e.connect(busDrums); o.start(time); o.stop(time + 0.3);
             } else if (inst === 'snare') {
                 const s = audioCtx.createBufferSource(), f = audioCtx.createBiquadFilter(), e = audioCtx.createGain();
                 s.buffer = noiseBuffer; f.type = 'bandpass'; f.frequency.value = 2500;
                 e.gain.setValueAtTime(0, time); e.gain.linearRampToValueAtTime(0.6, time + 0.005); e.gain.exponentialRampToValueAtTime(0.01, time + (nDec * 3)); 
-                s.connect(f); f.connect(e); e.connect(masterBus); s.start(time); s.stop(time + (nDec * 3) + 0.1);
+                s.connect(f); f.connect(e); e.connect(busDrums); s.start(time); s.stop(time + (nDec * 3) + 0.1);
             } else if (inst === 'hat') {
                 const s = audioCtx.createBufferSource(), f = audioCtx.createBiquadFilter(), e = audioCtx.createGain();
                 s.buffer = noiseBuffer; f.type = 'highpass'; f.frequency.value = 7000;
                 e.gain.setValueAtTime(0, time); e.gain.linearRampToValueAtTime(0.4, time + 0.005); e.gain.exponentialRampToValueAtTime(0.01, time + nDec);
-                s.connect(f); f.connect(e); e.connect(masterBus); s.start(time); s.stop(time + nDec + 0.1);
+                s.connect(f); f.connect(e); e.connect(busDrums); s.start(time); s.stop(time + nDec + 0.1);
             }
         }
 
@@ -809,19 +831,19 @@
                 const o = audioCtx.createOscillator(), e = audioCtx.createGain();
                 o.frequency.setValueAtTime(parseFloat(document.getElementById('kickPitch').value), time); o.frequency.exponentialRampToValueAtTime(40, time + 0.1);
                 e.gain.setValueAtTime(0, time); e.gain.linearRampToValueAtTime(0.8, time + 0.005); e.gain.exponentialRampToValueAtTime(0.01, time + 0.25);
-                o.connect(e); e.connect(masterBus); o.start(time); o.stop(time + 0.3);
+                o.connect(e); e.connect(busDrums); o.start(time); o.stop(time + 0.3);
             }
             if (t.snare[step]) {
                 const s = audioCtx.createBufferSource(), f = audioCtx.createBiquadFilter(), e = audioCtx.createGain();
                 s.buffer = noiseBuffer; f.type = 'bandpass'; f.frequency.value = 2500;
                 e.gain.setValueAtTime(0, time); e.gain.linearRampToValueAtTime(0.6, time + 0.005); e.gain.exponentialRampToValueAtTime(0.01, time + (nDec * 3)); 
-                s.connect(f); f.connect(e); e.connect(masterBus); s.start(time); s.stop(time + (nDec * 3) + 0.1);
+                s.connect(f); f.connect(e); e.connect(busDrums); s.start(time); s.stop(time + (nDec * 3) + 0.1);
             }
             if (t.hat[step] > 0) {
                 const s = audioCtx.createBufferSource(), f = audioCtx.createBiquadFilter(), e = audioCtx.createGain();
                 s.buffer = noiseBuffer; f.type = 'highpass'; f.frequency.value = 7000;
                 e.gain.setValueAtTime(0, time); e.gain.linearRampToValueAtTime((t.hat[step] / 100) * 0.4, time + 0.005); e.gain.exponentialRampToValueAtTime(0.01, time + nDec);
-                s.connect(f); f.connect(e); e.connect(masterBus); s.start(time); s.stop(time + nDec + 0.1);
+                s.connect(f); f.connect(e); e.connect(busDrums); s.start(time); s.stop(time + nDec + 0.1);
             }
         }
 
@@ -882,11 +904,21 @@
         });
 
         // ==========================================================
-        // === DAW: Local WAV Recording (MediaRecorder -> decode -> WAV)
+        // === DAW: Local Multi-Track WAV Recording
+        // === One REC pass runs 4 parallel MediaRecorders (master bus + each
+        // === track's own bus), so every stem comes from the same take and
+        // === stays phase-locked to the others. Stop decodes + WAV-encodes
+        // === all four and lights up individual download chips.
         // ==========================================================
         const recordBtn = document.getElementById('recordBtn');
         const recordStatus = document.getElementById('recordStatus');
-        const downloadBtn = document.getElementById('downloadBtn');
+        const downloadEls = {
+            master: document.getElementById('downloadMaster'),
+            A: document.getElementById('downloadA'),
+            B: document.getElementById('downloadB'),
+            drums: document.getElementById('downloadDrums')
+        };
+        const stemLabel = { master: 'master', A: 'trackA', B: 'trackB', drums: 'drums' };
 
         if (typeof MediaRecorder === 'undefined') {
             recordBtn.classList.add('btn-disabled');
@@ -895,48 +927,38 @@
         } else {
             recordBtn.addEventListener('click', async () => {
                 await initAudio();
-                if (!recordDestination) return; // safety guard, shouldn't happen post-initAudio
+                if (!recordDest.master) return; // safety guard, shouldn't happen post-initAudio
 
                 if (!isRecording) {
-                    recordedChunks = [];
-                    let options;
-                    if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-                        options = { mimeType: 'audio/webm;codecs=opus' };
-                    } else if (MediaRecorder.isTypeSupported('audio/webm')) {
-                        options = { mimeType: 'audio/webm' };
-                    }
-                    mediaRecorder = new MediaRecorder(recordDestination.stream, options);
+                    STEMS.forEach(key => {
+                        recordedChunks[key] = [];
+                        Object.values(downloadEls).forEach(el => el.classList.add('btn-disabled'));
 
-                    mediaRecorder.ondataavailable = (e) => {
-                        if (e.data && e.data.size > 0) recordedChunks.push(e.data);
-                    };
-
-                    mediaRecorder.onstop = async () => {
-                        recordStatus.innerText = 'ENCODING';
-                        const rawBlob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-                        try {
-                            // Decode the captured audio and re-encode as PCM WAV, so the
-                            // download works directly in any DAW with no transcoding step.
-                            const arrayBuffer = await rawBlob.arrayBuffer();
-                            const decoded = await audioCtx.decodeAudioData(arrayBuffer);
-                            const wavBlob = audioBufferToWav(decoded);
-                            downloadBtn.href = URL.createObjectURL(wavBlob);
-                            downloadBtn.download = recordingFilename('wav');
-                        } catch (err) {
-                            // Fallback: offer the original compressed capture if WAV encoding fails
-                            downloadBtn.href = URL.createObjectURL(rawBlob);
-                            downloadBtn.download = recordingFilename('webm');
+                        let options;
+                        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+                            options = { mimeType: 'audio/webm;codecs=opus' };
+                        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+                            options = { mimeType: 'audio/webm' };
                         }
-                        downloadBtn.classList.remove('btn-disabled');
-                        recordStatus.innerText = '00:00';
-                    };
+                        const rec = new MediaRecorder(recordDest[key].stream, options);
+                        rec.ondataavailable = (e) => {
+                            if (e.data && e.data.size > 0) recordedChunks[key].push(e.data);
+                        };
+                        rec.onstop = () => encodeStem(key);
+                        mediaRecorders[key] = rec;
+                        rec.start();
+                    });
 
-                    mediaRecorder.start();
                     isRecording = true;
                     recordStartTime = Date.now();
+                    {
+                        const d = new Date(recordStartTime);
+                        const pad = (n) => String(n).padStart(2, '0');
+                        takeStamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+                    }
                     recordBtn.classList.add('rec-live');
                     recordBtn.innerText = '■ STOP';
-                    downloadBtn.classList.add('btn-disabled');
+                    recordStatus.innerText = '00:00';
 
                     recordTimerInterval = setInterval(() => {
                         const elapsed = Math.floor((Date.now() - recordStartTime) / 1000);
@@ -945,13 +967,37 @@
                         recordStatus.innerText = `${mm}:${ss}`;
                     }, 500);
                 } else {
-                    mediaRecorder.stop();
+                    STEMS.forEach(key => mediaRecorders[key] && mediaRecorders[key].stop());
                     isRecording = false;
                     clearInterval(recordTimerInterval);
                     recordBtn.classList.remove('rec-live');
                     recordBtn.innerText = '&#9679; REC';
+                    recordStatus.innerText = 'ENCODING';
                 }
             });
+        }
+
+        async function encodeStem(key) {
+            const el = downloadEls[key];
+            const rec = mediaRecorders[key];
+            const rawBlob = new Blob(recordedChunks[key], { type: (rec && rec.mimeType) || 'audio/webm' });
+            try {
+                // Decode the captured audio and re-encode as PCM WAV, so every stem
+                // drops straight into a DAW with no transcoding step.
+                const arrayBuffer = await rawBlob.arrayBuffer();
+                const decoded = await audioCtx.decodeAudioData(arrayBuffer);
+                const wavBlob = audioBufferToWav(decoded);
+                el.href = URL.createObjectURL(wavBlob);
+                el.download = recordingFilename(stemLabel[key], 'wav');
+            } catch (err) {
+                // Fallback: offer the original compressed capture if WAV encoding fails
+                el.href = URL.createObjectURL(rawBlob);
+                el.download = recordingFilename(stemLabel[key], 'webm');
+            }
+            el.classList.remove('btn-disabled');
+            if (STEMS.every(k => !downloadEls[k].classList.contains('btn-disabled'))) {
+                recordStatus.innerText = '00:00';
+            }
         }
 
         function audioBufferToWav(buffer) {
@@ -1004,12 +1050,10 @@
             for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i));
         }
 
-        function recordingFilename(ext) {
-            const d = new Date();
-            const pad = (n) => String(n).padStart(2, '0');
-            const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-                          `_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
-            return `sq2046-recording-${stamp}.${ext}`;
+        function recordingFilename(stem, ext) {
+            // All four stems from one take share the same timestamp (captured when
+            // REC was pressed), so they're easy to group back together in a DAW.
+            return `sq2046-${takeStamp}-${stem}.${ext}`;
         }
     </script>
 </body>
